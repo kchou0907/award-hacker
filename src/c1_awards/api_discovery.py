@@ -272,6 +272,7 @@ class NetworkDiscovery:
             "captured_exchange_count": len(self.exchanges),
             "target_substring": self.target_substring,
             "candidates": [_public_exchange(item) for item in candidates],
+            "chronology": [_public_exchange(item) for item in self.exchanges],
         }
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
         return path
