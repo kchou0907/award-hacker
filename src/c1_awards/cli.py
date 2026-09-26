@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 from datetime import date
 from pathlib import Path
 
+from .api_discovery import discover_aeroplan_api
 from .export import export_csv
 from .models import Cabin
 from .scrapers import AeroplanScraper
@@ -41,11 +43,45 @@ async def run_aeroplan(args) -> None:
     print(f"Wrote {len(awards)} award rows to {args.out}")
 
 
+async def run_discover_aeroplan(args) -> None:
+    result = await discover_aeroplan_api(
+        args.origin,
+        args.destination,
+        date.fromisoformat(args.date),
+        passengers=args.passengers,
+        profile_dir=Path(args.profile_dir),
+        capture_dir=Path(args.capture_dir),
+        browser=args.browser,
+        headless=args.headless,
+        wait_seconds=args.wait_seconds,
+        attempt_replay=not args.no_replay,
+    )
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="c1-awards")
     sub = p.add_subparsers(dest="command", required=True)
 
-    a = sub.add_parser("aeroplan", help="Experimental Aeroplan award search")
+    d = sub.add_parser(
+        "discover-aeroplan",
+        help="Capture Aeroplan fetch/XHR traffic, identify polldapi, and test direct replay",
+    )
+    d.add_argument("--origin", required=True)
+    d.add_argument("--destination", required=True)
+    d.add_argument("--date", required=True, help="YYYY-MM-DD")
+    d.add_argument("--passengers", type=int, default=1)
+    d.add_argument("--profile-dir", default=".browser-profile")
+    d.add_argument("--capture-dir", default=".captures")
+    d.add_argument("--browser", choices=["auto", "chrome", "chromium"], default="auto")
+    d.add_argument("--headless", action="store_true")
+    d.add_argument("--wait-seconds", type=int, default=180)
+    d.add_argument("--no-replay", action="store_true")
+
+    a = sub.add_parser(
+        "aeroplan",
+        help="Legacy experimental Aeroplan DOM scraper; prefer discover-aeroplan first",
+    )
     a.add_argument("--origin", required=True)
     a.add_argument("--destination", required=True)
     a.add_argument("--date", required=True, help="YYYY-MM-DD")
@@ -64,7 +100,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
-    if args.command == "aeroplan":
+    if args.command == "discover-aeroplan":
+        asyncio.run(run_discover_aeroplan(args))
+    elif args.command == "aeroplan":
         asyncio.run(run_aeroplan(args))
 
 
