@@ -4,7 +4,7 @@ import asyncio
 import json
 import re
 from dataclasses import asdict, dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -60,6 +60,8 @@ CANDIDATE_URL_TERMS = (
 
 @dataclass(slots=True)
 class CapturedExchange:
+    sequence: int
+    observed_at: str
     method: str
     url: str
     resource_type: str
@@ -194,6 +196,7 @@ class NetworkDiscovery:
         self.target_substring = target_substring.lower()
         self.exchanges: list[CapturedExchange] = []
         self.target_event = asyncio.Event()
+        self.inventory_event = asyncio.Event()
         self.capture_dir.mkdir(parents=True, exist_ok=True)
 
     async def capture_response(self, response: Response) -> None:
@@ -225,7 +228,10 @@ class NetworkDiscovery:
             request_headers = dict(request.headers)
 
         score, reasons = score_candidate(url, resource_type, response_json)
+        sequence = len(self.exchanges) + 1
         exchange = CapturedExchange(
+            sequence=sequence,
+            observed_at=datetime.now(timezone.utc).isoformat(),
             method=request.method,
             url=url,
             resource_type=resource_type,
@@ -253,6 +259,8 @@ class NetworkDiscovery:
 
         if self.target_substring in url.lower():
             self.target_event.set()
+        if "airBoundGroups" in _json_key_hits(response_json, {"airBoundGroups"}):
+            self.inventory_event.set()
 
     def best_candidates(self, limit: int = 10) -> list[CapturedExchange]:
         return sorted(self.exchanges, key=lambda item: item.score, reverse=True)[:limit]
@@ -410,6 +418,11 @@ async def discover_aeroplan_api(
             await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
             try:
                 await asyncio.wait_for(discovery.target_event.wait(), timeout=wait_seconds)
+                if not discovery.inventory_event.is_set():
+                    try:
+                        await asyncio.wait_for(discovery.inventory_event.wait(), timeout=15)
+                    except asyncio.TimeoutError:
+                        pass
             except asyncio.TimeoutError:
                 pass
 
