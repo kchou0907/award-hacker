@@ -1,105 +1,194 @@
-# Capital One Award Hacker — scraper MVP
+# Capital One Award Hacker — API-first MVP
 
-This is the scraper-side companion to the **Capital One Award Hacker — MVP** Google Sheet.
+The goal is to search airline award inventory, normalize it, then calculate the effective Capital One cost and CPP.
 
-## What is implemented
+The project is now **API-discovery first**. Browser automation is used only to observe a normal airline search and bootstrap session state when necessary. The preferred end state for each airline is a direct HTTP API client, not DOM scraping.
 
-- A normalized award-result schema.
+## Current status
+
+Implemented:
+
+- Normalized award-result schema.
 - Capital One transfer ratios and effective Capital One-mile cost.
 - Bonus-aware effective CPP:
   `CPP = (comparable cash fare - award taxes/fees) / Capital One miles needed * 100`.
-- A Playwright browser/session layer with persistent browser state.
-- A generic JSON/XHR capture harness that saves structured responses for later reverse-engineering.
-- An **experimental Air Canada Aeroplan scraper** adapted from public OSS selector patterns.
-- CSV export whose columns line up with the Google Sheet's `Award Results` raw-input columns.
+- Aeroplan API-discovery harness.
+- XHR/fetch capture with raw and sanitized reports.
+- Candidate-endpoint scoring.
+- Direct `httpx` replay using ordinary session/auth state while deliberately excluding known bot-defense-specific state.
+- Legacy experimental Aeroplan DOM scraper kept only as a fallback/reference.
+- CSV export aligned with the original Google Sheet MVP.
 
-## What is intentionally not claimed
+Current Aeroplan lead:
 
-The Aeroplan adapter is **not validated against a live logged-in session in this build environment**.
-Airline award sites change frequently, may require login, and may use bot defenses. The scraper therefore:
-
-1. uses a normal visible browser by default;
-2. keeps a persistent profile so you can log in normally;
-3. saves JSON/XHR responses, HTML, and a screenshot when parsing fails;
-4. does not attempt to bypass CAPTCHAs or authentication controls.
+- A recent open-source implementation reports that Aeroplan award inventory arrives in a JSON response whose URL contains `polldapi`.
+- That response can contain structured fields such as `airBoundGroups`, `airBounds`, `availabilityDetails`, `quota`, `prices`, and `convertedMiles`.
+- Our discovery command verifies the request on your own session instead of assuming that implementation is still current.
 
 ## Install
 
-```bash
+```fish
+git clone https://github.com/kchou0907/award-hacker.git
+cd award-hacker
+
 python -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate.fish
 pip install -e .
 playwright install chromium
 ```
 
-## First Aeroplan run
+If Google Chrome is installed, the discovery command prefers it automatically. Otherwise it falls back to Playwright Chromium.
 
-Use a visible browser so you can sign in if Air Canada asks you to.
+## Reverse-engineer Aeroplan first
 
-```bash
+Run:
+
+```fish
+c1-awards discover-aeroplan \
+  --origin SFO \
+  --destination TPE \
+  --date 2027-01-01
+```
+
+What happens:
+
+1. A normal Air Canada/Aeroplan search page opens.
+2. If login is required, log in normally in that browser window.
+3. The tool records JSON XHR/fetch responses only.
+4. It waits for a request/response whose URL contains `polldapi`.
+5. It saves the raw exchange locally under `.captures/aeroplan/`.
+6. It also writes a sanitized `summary.public.json`.
+7. It attempts to replay the candidate request directly with `httpx`.
+8. Bot-defense-specific headers/cookies are intentionally not reused. If the direct call requires them, the tool reports that instead of trying to bypass the protection.
+
+Useful options:
+
+```fish
+# Force installed Google Chrome
+c1-awards discover-aeroplan ... --browser chrome
+
+# Force bundled Playwright Chromium
+c1-awards discover-aeroplan ... --browser chromium
+
+# Capture only; do not attempt the HTTP replay
+c1-awards discover-aeroplan ... --no-replay
+
+# Give yourself more time to finish a manual login
+c1-awards discover-aeroplan ... --wait-seconds 300
+```
+
+## What to inspect after a run
+
+```text
+.captures/aeroplan/
+├── exchange-001.raw.json
+├── exchange-001.public.json
+├── ...
+├── summary.public.json
+└── replay.public.json
+```
+
+The files ending in `.raw.json` can contain authenticated request headers or other session material. They are intentionally ignored by Git.
+
+The sanitized summary is the useful artifact to inspect or share.
+
+A successful direct replay is the key milestone. If `replay.public.json` shows a 2xx response with the same award JSON, we can replace the Aeroplan browser scraper with a direct API adapter.
+
+## Security / session handling
+
+Do **not** put airline passwords in this repo or send them in chat.
+
+Use the persistent local browser profile:
+
+```text
+.browser-profile/
+```
+
+Log in normally in the browser window. The following are gitignored:
+
+```text
+.browser-profile/
+.raw/
+.captures/
+*.har
+cookies.json
+session.json
+storage-state.json
+```
+
+## API-first target architecture
+
+```text
+normal browser login/search, only when needed
+                 │
+                 ▼
+       capture XHR/fetch contract
+                 │
+                 ▼
+       direct airline API client
+            (httpx)
+                 │
+                 ▼
+       normalized AwardResult
+                 │
+                 ▼
+ Capital One transfer ratio / bonus
+                 │
+                 ▼
+           effective CPP
+```
+
+For each airline, the preferred progression is:
+
+1. identify its structured search endpoint;
+2. determine request method, parameters/body, headers, cookies and prerequisite calls;
+3. replay it outside the browser;
+4. minimize the required session state;
+5. build a stable JSON parser;
+6. keep browser automation only if session/bootstrap remains necessary.
+
+## Legacy Aeroplan DOM scraper
+
+The old command still exists:
+
+```fish
 c1-awards aeroplan \
   --origin SFO \
   --destination TPE \
   --date 2027-01-01 \
   --cabin business \
-  --profile-dir .browser-profile \
-  --raw-dir .raw \
   --out aeroplan.csv
 ```
 
-If you want CPP immediately, supply a **comparable** cash fare:
+It should now be considered a fallback. Do API discovery first.
 
-```bash
-c1-awards aeroplan \
-  --origin SFO \
-  --destination TPE \
-  --date 2027-01-01 \
-  --cabin business \
-  --cash-price 2500 \
-  --cash-source "Google Flights" \
-  --cash-url "https://www.google.com/travel/flights" \
-  --out aeroplan.csv
+## Comparable cash fare / CPP
+
+Once award inventory is normalized, CPP is:
+
+```text
+(cash fare - award taxes/fees)
+----------------------------- × 100
+     Capital One miles
 ```
 
-Do not use an unrelated cash fare just to get a high CPP. The cash itinerary should match date,
-route, cabin and roughly the same routing/conditions.
+The cash comparison should match the award itinerary's date, route, cabin and roughly the same routing/conditions.
 
-## Transfer bonus
+## Next programs
 
-Pass a current Capital One transfer bonus as a decimal. Example: 20%:
+After Aeroplan's request contract is understood, use the same discovery/replay framework for:
 
-```bash
-c1-awards aeroplan ... --transfer-bonus 0.20
-```
-
-The code uses the program's base transfer ratio and the bonus to calculate Capital One miles needed.
-
-## Debugging a broken scraper
-
-On every Aeroplan search, JSON/XHR responses are captured under `--raw-dir`.
-If selectors stop working, inspect those files before changing the DOM parser.
-
-A failed parse also saves:
-
-- `aeroplan-failure.html`
-- `aeroplan-failure.png`
-
-The preferred evolution is **structured-response parser first, DOM parser second**.
-
-## Next adapters
-
-The most sensible next programs based on existing OSS reference implementations are:
-
-1. British Airways Club
+1. EVA Air Infinity MileageLands
 2. Cathay Pacific Asia Miles
 3. Singapore Airlines KrisFlyer
+4. British Airways Club
+5. Flying Blue
 
-EVA Air is strategically useful for Taiwan, but the inspected references did not already contain a ready adapter,
-so it likely needs a fresh network-flow reverse-engineering pass.
+For Taiwan searches, EVA and Cathay are intentionally prioritized.
 
 ## Data contract
 
-Scrapers should emit at least:
+Airline adapters should emit at least:
 
 - program
 - operating airline / flight
@@ -112,10 +201,4 @@ Scrapers should emit at least:
 - award source URL
 - found-at timestamp
 
-The cash-fare component should separately emit:
-
-- comparable cash price
-- cash source
-- cash URL
-
-Capital One transfer cost and CPP belong in the normalization/analysis layer, not inside each airline scraper.
+Capital One transfer cost and CPP belong in the normalization/analysis layer, not inside individual airline clients.
