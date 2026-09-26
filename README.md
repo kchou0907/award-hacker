@@ -90,7 +90,9 @@ c1-awards discover-aeroplan ... --wait-seconds 300
 
 The files ending in `.raw.json` can contain authenticated request headers or other session material. They are intentionally ignored by Git.
 
-The sanitized summary is the useful artifact to inspect or share.
+The `.public.json` files redact obvious credential/session headers, but their JSON response bodies may still contain itinerary, pricing, or account-specific data. Inspect them before sharing.
+
+The summary preserves both ranked candidates and the chronological XHR/fetch flow so we can identify the request that primes the later `polldapi` poll.
 
 A successful direct replay is the key milestone. If `replay.public.json` shows a 2xx response with the same award JSON, we can replace the Aeroplan browser scraper with a direct API adapter.
 
