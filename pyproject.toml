@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "capital-one-award-hacker"
+version = "0.1.0"
+description = "Capital One award-search MVP with effective CPP and scraper adapters"
+requires-python = ">=3.11"
+dependencies = [
+  "playwright>=1.48,<2",
+]
+
+[project.scripts]
+c1-awards = "c1_awards.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
